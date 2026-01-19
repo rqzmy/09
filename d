@@ -43,6 +43,26 @@ local isGlitchActive = false
 local CurrentTrack
 local lastPosition = character.PrimaryPart and character.PrimaryPart.Position or Vector3.new()
 
+-- FreeCam Variables
+local freeCamEnabled = false
+local freeCamConnection
+local keysDown = {}
+local rotating = false
+local touchPos
+local onMobile = not UserInputService.KeyboardEnabled
+local freeCamSpeed = 25
+local freeCamSens = 0.3
+local originalWalkSpeed = 16
+local originalJumpPower = 50
+local originalJumpHeight = 7.2
+local originalCamera = workspace.CurrentCamera.CameraType
+
+freeCamSpeed = freeCamSpeed / 25
+
+if onMobile then
+    freeCamSens = freeCamSens * 2
+end
+
 -- Function to check if in correct map
 local function isInCorrectMap()
     return game.PlaceId == 6358567974
@@ -103,6 +123,171 @@ local function SmoothTween(obj, time, properties)
     return tween
 end
 
+-- FreeCam Functions
+local function freeCamRenderStep()
+    local cam = workspace.CurrentCamera
+    
+    if rotating then
+        local delta = UserInputService:GetMouseDelta()
+        local cf = cam.CFrame
+        local yAngle = cf:ToEulerAngles(Enum.RotationOrder.YZX)
+        local newAmount = math.deg(yAngle) + delta.Y
+        
+        if newAmount > 65 or newAmount < -65 then
+            if not (yAngle < 0 and delta.Y < 0) and not (yAngle > 0 and delta.Y > 0) then
+                delta = Vector2.new(delta.X, 0)
+            end
+        end
+        
+        cf = cf * CFrame.Angles(-math.rad(delta.Y), 0, 0)
+        cf = CFrame.Angles(0, -math.rad(delta.X), 0) * (cf - cf.Position) + cf.Position
+        cf = CFrame.lookAt(cf.Position, cf.Position + cf.LookVector)
+        
+        if delta ~= Vector2.new(0, 0) then
+            cam.CFrame = cam.CFrame:Lerp(cf, freeCamSens)
+        end
+        
+        UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+    else
+        UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+    end
+    
+    if keysDown["Enum.KeyCode.W"] then
+        cam.CFrame = cam.CFrame * CFrame.new(Vector3.new(0, 0, -freeCamSpeed))
+    end
+    if keysDown["Enum.KeyCode.A"] then
+        cam.CFrame = cam.CFrame * CFrame.new(Vector3.new(-freeCamSpeed, 0, 0))
+    end
+    if keysDown["Enum.KeyCode.S"] then
+        cam.CFrame = cam.CFrame * CFrame.new(Vector3.new(0, 0, freeCamSpeed))
+    end
+    if keysDown["Enum.KeyCode.D"] then
+        cam.CFrame = cam.CFrame * CFrame.new(Vector3.new(freeCamSpeed, 0, 0))
+    end
+end
+
+local function enableFreeCam()
+    if freeCamEnabled then return end
+    freeCamEnabled = true
+    
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            originalWalkSpeed = hum.WalkSpeed
+            originalJumpPower = hum.JumpPower
+            originalJumpHeight = hum.JumpHeight
+            
+            hum.WalkSpeed = 0
+            hum.JumpPower = 0
+            hum.JumpHeight = 0
+        end
+    end
+    
+    workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+    freeCamConnection = RunService.RenderStepped:Connect(freeCamRenderStep)
+end
+
+local function disableFreeCam()
+    if not freeCamEnabled then return end
+    freeCamEnabled = false
+    
+    if freeCamConnection then
+        freeCamConnection:Disconnect()
+        freeCamConnection = nil
+    end
+    
+    if player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = originalWalkSpeed
+            hum.JumpPower = originalJumpPower
+            hum.JumpHeight = originalJumpHeight
+        end
+    end
+    
+    workspace.CurrentCamera.CameraSubject = player.Character.Humanoid
+    workspace.CurrentCamera.CameraType = originalCamera
+    
+    keysDown = {}
+    rotating = false
+end
+
+-- Input handling for FreeCam
+local validKeys = {"Enum.KeyCode.W", "Enum.KeyCode.A", "Enum.KeyCode.S", "Enum.KeyCode.D"}
+
+UserInputService.InputBegan:Connect(function(Input)
+    if not freeCamEnabled then return end
+    
+    for i, key in pairs(validKeys) do
+        if key == tostring(Input.KeyCode) then
+            keysDown[key] = true
+        end
+    end
+    
+    if Input.UserInputType == Enum.UserInputType.MouseButton2 or 
+       (Input.UserInputType == Enum.UserInputType.Touch and UserInputService:GetMouseLocation().X > (workspace.CurrentCamera.ViewportSize.X / 2)) then
+        rotating = true
+    end
+    
+    if Input.UserInputType == Enum.UserInputType.Touch then
+        if Input.Position.X < workspace.CurrentCamera.ViewportSize.X / 2 then
+            touchPos = Input.Position
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(Input)
+    if not freeCamEnabled then return end
+    
+    for key, v in pairs(keysDown) do
+        if key == tostring(Input.KeyCode) then
+            keysDown[key] = false
+        end
+    end
+    
+    if Input.UserInputType == Enum.UserInputType.MouseButton2 or 
+       (Input.UserInputType == Enum.UserInputType.Touch and UserInputService:GetMouseLocation().X > (workspace.CurrentCamera.ViewportSize.X / 2)) then
+        rotating = false
+    end
+    
+    if Input.UserInputType == Enum.UserInputType.Touch and touchPos then
+        if Input.Position.X < workspace.CurrentCamera.ViewportSize.X / 2 then
+            touchPos = nil
+            keysDown["Enum.KeyCode.W"] = false
+            keysDown["Enum.KeyCode.A"] = false
+            keysDown["Enum.KeyCode.S"] = false
+            keysDown["Enum.KeyCode.D"] = false
+        end
+    end
+end)
+
+UserInputService.TouchMoved:Connect(function(input)
+    if not freeCamEnabled then return end
+    
+    if touchPos then
+        if input.Position.X < workspace.CurrentCamera.ViewportSize.X / 2 then
+            if input.Position.Y < touchPos.Y then
+                keysDown["Enum.KeyCode.W"] = true
+                keysDown["Enum.KeyCode.S"] = false
+            else
+                keysDown["Enum.KeyCode.W"] = false
+                keysDown["Enum.KeyCode.S"] = true
+            end
+            
+            if input.Position.X < (touchPos.X - 15) then
+                keysDown["Enum.KeyCode.A"] = true
+                keysDown["Enum.KeyCode.D"] = false
+            elseif input.Position.X > (touchPos.X + 15) then
+                keysDown["Enum.KeyCode.A"] = false
+                keysDown["Enum.KeyCode.D"] = true
+            else
+                keysDown["Enum.KeyCode.A"] = false
+                keysDown["Enum.KeyCode.D"] = false
+            end
+        end
+    end
+end)
+
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "SiextherByHann.Sxthr"
 screenGui.ResetOnSpawn = false
@@ -110,8 +295,8 @@ screenGui.Parent = Services.CoreGui
 
 -- MAIN FRAME
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 220)
-mainFrame.Position = UDim2.new(0.5, -120, 0.5, -110)
+mainFrame.Size = UDim2.new(0, 240, 0, 253)
+mainFrame.Position = UDim2.new(0.5, -120, 0.5, -126.5)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 18, 25)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -205,7 +390,7 @@ title.Position = UDim2.new(0, 0, 0, 0)
 title.BackgroundTransparency = 1
 title.Text = "SIEXTHER GLITCH"
 title.Font = Enum.Font.GothamBold
-title.TextSize = 14
+title.TextSize = 16
 title.TextColor3 = Color3.fromRGB(70, 130, 255)
 title.Parent = mainFrame
 
@@ -392,10 +577,25 @@ swimBtn.Parent = mainFrame
 local swimCorner = Instance.new("UICorner", swimBtn)
 swimCorner.CornerRadius = UDim.new(0, 7)
 
+-- XNXX Button (untuk mengaktifkan emote dengan collision control)
+local xnxxBtn = Instance.new("TextButton")
+xnxxBtn.Size = UDim2.new(0.48, -5, 0, 28)
+xnxxBtn.Position = UDim2.new(0, 10, 0, 190)
+xnxxBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+xnxxBtn.BorderSizePixel = 0
+xnxxBtn.Text = "XNXX"
+xnxxBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+xnxxBtn.Font = Enum.Font.GothamBold
+xnxxBtn.TextSize = 11
+xnxxBtn.Parent = mainFrame
+
+local xnxxCorner = Instance.new("UICorner", xnxxBtn)
+xnxxCorner.CornerRadius = UDim.new(0, 7)
+
 -- Copy Hat IDs Button
 local copyHatBtn = Instance.new("TextButton")
-copyHatBtn.Size = UDim2.new(1, -20, 0, 28)
-copyHatBtn.Position = UDim2.new(0, 10, 0, 190)
+copyHatBtn.Size = UDim2.new(0.48, -5, 0, 28)
+copyHatBtn.Position = UDim2.new(0.52, 0, 0, 190)
 copyHatBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
 copyHatBtn.BorderSizePixel = 0
 copyHatBtn.Text = "COPY HAT"
@@ -406,6 +606,21 @@ copyHatBtn.Parent = mainFrame
 
 local copyHatCorner = Instance.new("UICorner", copyHatBtn)
 copyHatCorner.CornerRadius = UDim.new(0, 7)
+
+-- FreeCam Button
+local freeCamBtn = Instance.new("TextButton")
+freeCamBtn.Size = UDim2.new(1, -20, 0, 28)
+freeCamBtn.Position = UDim2.new(0, 10, 0, 223)
+freeCamBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+freeCamBtn.BorderSizePixel = 0
+freeCamBtn.Text = "FREECAM"
+freeCamBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+freeCamBtn.Font = Enum.Font.GothamBold
+freeCamBtn.TextSize = 11
+freeCamBtn.Parent = mainFrame
+
+local freeCamCorner = Instance.new("UICorner", freeCamBtn)
+freeCamCorner.CornerRadius = UDim.new(0, 7)
 
 -- Update button state based on map
 local function updateCopyHatButton()
@@ -448,7 +663,7 @@ sliderBar.InputBegan:Connect(function(input)
 end)
 
 thumb.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+ if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         updateFromInput(input)
     end
@@ -578,9 +793,171 @@ swimBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+-- FreeCam Button Logic
+freeCamBtn.MouseButton1Click:Connect(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/rqzmy/09/refs/heads/main/2"))()
+end)
+
 -- Copy Hat IDs Button Logic
 copyHatBtn.MouseButton1Click:Connect(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/rqzmy/09/refs/heads/main/cc"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/rqzmy/09/refs/heads/main/cc"))()
+end)
+
+local xnxxActive = false
+local xnxxTrack = nil
+local xnxxCollisionConnection = nil
+local xnxxOriginalCollisionStates = {}
+
+-- XNXX Settings
+local XnxxSettings = {}
+XnxxSettings["Stop On Move"] = false
+XnxxSettings["Fade In"] = 0.1
+XnxxSettings["Fade Out"] = 0.1
+XnxxSettings["Weight"] = 1
+XnxxSettings["Speed"] = 1
+XnxxSettings["Allow Invisible"] = true
+XnxxSettings["Time Position"] = 0
+
+-- Function untuk load track XNXX
+local function LoadXnxxTrack(id)
+    if xnxxTrack then 
+        xnxxTrack:Stop(0) 
+    end
+
+    local animId
+    local ok, result = pcall(function()
+        return game:GetObjects("rbxassetid://" .. tostring(id))
+    end)
+
+    if ok and result and #result > 0 then
+        local anim = result[1]
+        if anim:IsA("Animation") then
+            animId = anim.AnimationId
+        else
+            animId = "rbxassetid://" .. tostring(id)
+        end
+    else
+        animId = "rbxassetid://" .. tostring(id)
+    end
+
+    local newAnim = Instance.new("Animation")
+    newAnim.AnimationId = animId
+    local newTrack = humanoid:LoadAnimation(newAnim)
+    newTrack.Priority = Enum.AnimationPriority.Action4
+
+    local weight = XnxxSettings["Weight"]
+    if weight == 0 then
+        weight = 0.001
+    end
+
+    newTrack:Play(XnxxSettings["Fade In"], weight, XnxxSettings["Speed"])
+    
+    xnxxTrack = newTrack
+    xnxxTrack.TimePosition = math.clamp(XnxxSettings["Time Position"], 0, 1) * xnxxTrack.Length
+
+    return newTrack
+end
+
+-- Function untuk save collision states XNXX
+local function saveXnxxCollisionStates()
+    xnxxOriginalCollisionStates = {}
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part ~= humanoidRootPart then
+            xnxxOriginalCollisionStates[part] = part.CanCollide
+        end
+    end
+end
+
+-- Function untuk disable collisions
+local function disableXnxxCollisionsExceptRootPart()
+    if not XnxxSettings["Allow Invisible"] then
+        return
+    end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") and part ~= humanoidRootPart then
+            part.CanCollide = false
+        end
+    end
+end
+
+-- Function untuk restore collisions
+local function restoreXnxxCollisions()
+    for part, state in pairs(xnxxOriginalCollisionStates) do
+        if part and part.Parent then
+            part.CanCollide = state
+        end
+    end
+end
+
+-- Function untuk start XNXX
+local function startXnxx()
+    saveXnxxCollisionStates()
+    
+    task.wait(1)
+    xnxxTrack = LoadXnxxTrack(116241168989348)
+    
+    xnxxCollisionConnection = RunService.Stepped:Connect(function()
+        if character and character.Parent then
+            if XnxxSettings["Allow Invisible"] then
+                disableXnxxCollisionsExceptRootPart()
+            end
+        end
+    end)
+    
+    xnxxActive = true
+end
+
+-- Function untuk stop XNXX
+local function stopXnxx()
+    if xnxxTrack then
+        xnxxTrack:Stop(0)
+        xnxxTrack = nil
+    end
+    
+    if xnxxCollisionConnection then
+        xnxxCollisionConnection:Disconnect()
+        xnxxCollisionConnection = nil
+    end
+    
+    restoreXnxxCollisions()
+    xnxxActive = false
+end
+
+-- XNXX Button Logic
+xnxxBtn.MouseButton1Click:Connect(function()
+    -- Cek apakah glitch sudah diaktifkan
+    if not isGlitchActive then
+        getgenv().Notify({
+            Title = "TERJADI KESALAHAN", 
+            Content = "AKTIFKAN GLITCH TERLEBIH DAHULU!", 
+            Duration = 2
+        })
+        return
+    end
+    
+    -- Toggle XNXX
+    if not xnxxActive then
+        startXnxx()
+        xnxxBtn.Text = "XNXX"
+        xnxxBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 255)
+        getgenv().Notify({
+            Title = "XNXX", 
+            Content = "XNXX TELAH DIAKTIFKAN!", 
+            Duration = 2
+        })
+    else
+        stopXnxx()
+        xnxxBtn.Text = "XNXX"
+        xnxxBtn.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+        getgenv().Notify({
+            Title = "XNXX", 
+            Content = "XNXX TELAH DIMATIKAN!", 
+            Duration = 2
+        })
+    end
 end)
 
 -- Variable untuk menyimpan posisi frame
@@ -601,8 +978,8 @@ minimizedBtn.MouseButton1Click:Connect(function()
     mainFrame.BackgroundTransparency = 1
     
     SmoothTween(mainFrame, 0.5, {
-        Size = UDim2.new(0, 240, 0, 220),
-        Position = UDim2.new(0.5, -140, 0.5, -120),
+        Size = UDim2.new(0, 240, 0, 253),
+        Position = UDim2.new(0.5, -120, 0.5, -126.5),
         BackgroundTransparency = 0
     })
 end)
@@ -614,6 +991,12 @@ closeBtn.MouseButton1Click:Connect(function()
         spinConnection:Disconnect()
     end
     stopSwimming()
+    if freeCamEnabled then
+        disableFreeCam()
+    end
+    if xnxxActive then
+        stopXnxx()
+    end
     
     screenGui:Destroy()
 end)
@@ -621,5 +1004,26 @@ end)
 RunService.RenderStepped:Connect(function()
     if character.PrimaryPart then
         lastPosition = character.PrimaryPart.Position
+    end
+end)
+
+-- Handle character respawn for FreeCam and XNXX
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoid = character:WaitForChild("Humanoid")
+    
+    if freeCamEnabled then
+        task.wait(0.1)
+        local hum = newChar:WaitForChild("Humanoid")
+        hum.WalkSpeed = 0
+        hum.JumpPower = 0
+        hum.JumpHeight = 0
+    end
+    
+    if xnxxActive then
+        task.wait(0.1)
+        saveXnxxCollisionStates()
+        task.wait(1)
+        xnxxTrack = LoadXnxxTrack(116241168989348)
     end
 end)
